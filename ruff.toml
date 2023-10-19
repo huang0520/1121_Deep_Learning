@@ -1,0 +1,13 @@
+select = [
+    # Pyflakes
+    "F",
+    # Pycodestyle
+    "E",
+    "W",
+    # isort
+    "I001",
+]
+ignore = ["F401"]
+
+# Select files to check
+include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
