@@ -1,8 +1,7 @@
 # %%
-import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from IPython.display import Image, display
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 
@@ -77,8 +76,9 @@ class LogisticRegression(object):
         """Calculate cross entropy loss"""
         first = y * np.log(output)
         seacond = (1 - y) * np.log(1 - output + 1e-308)
+        loss = -1 * (first + seacond).mean()
 
-        return -1 * (first + seacond).mean()
+        return loss
 
     def gradient(self, X, output, y):
         """
@@ -102,3 +102,42 @@ class LogisticRegression(object):
 
 model = LogisticRegression()
 model.fit(X_train_std, y_train)
+
+y_pred = model.predict(X_test_std)
+
+# %%
+# * Plot the loss curve
+plt.plot(range(1, model.n_epoch + 1), model.cost_)
+plt.ylabel("Loss")
+plt.xlabel("Epoch")
+plt.show()
+
+# %%
+# * Plot the confusion matrix
+true_positive = np.count_nonzero(y_pred[y_pred == y_test] == 0)
+true_negative = np.count_nonzero(y_pred[y_pred == y_test] == 1)
+false_positive = np.count_nonzero(y_pred[y_pred != y_test] == 1)
+false_negative = np.count_nonzero(y_pred[y_pred != y_test] == 0)
+
+confmat = np.array([[true_positive, false_positive], [false_negative, true_negative]])
+
+fig, ax = plt.subplots(figsize=(4, 4))
+ax.matshow(confmat, cmap=plt.cm.Blues, alpha=0.3)
+for i in range(confmat.shape[0]):
+    for j in range(confmat.shape[1]):
+        ax.text(x=j, y=i, s=confmat[i, j], va="center", ha="center")
+
+plt.xlabel("Predicted label")
+plt.ylabel("True label")
+
+plt.tight_layout()
+plt.show()
+
+# %%
+# * Calculate the F1 score
+precision = true_positive / (true_positive + false_positive)
+recall = true_positive / (true_positive + false_negative)
+
+f1_score = 2 * (precision * recall) / (precision + recall)
+
+print("F1 score: ", f1_score)
