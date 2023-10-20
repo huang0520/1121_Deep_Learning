@@ -1,0 +1,12 @@
+select = [
+    "F",    # Pyflakes
+    "E",    # Pycodestyle
+    "W",
+    "I001", # isort
+]
+ignore = ["F401"]
+target-version = "py310"
+include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
+
+[pydocstyle]
+convention = "google" # Accepts: "google", "numpy", or "pep257".
