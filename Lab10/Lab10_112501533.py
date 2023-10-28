@@ -339,4 +339,4 @@ def top_k_nearest(word, k):
 
 
 top_k_nearest("will", 5)
-top_k_nearest("western", 5)
+top_k_nearest("rock", 5)
