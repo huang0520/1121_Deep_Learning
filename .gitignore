@@ -1,4 +1,6 @@
 .ruff_cache
+.DS_Store
 
 output/
 input/
+data/
