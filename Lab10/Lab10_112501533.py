@@ -12,6 +12,8 @@ from sklearn.manifold import TSNE
 from tensorflow.python.keras import Input, Model
 from tensorflow.python.keras.layers import InputLayer, Layer
 
+# Restrict warning outputs
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 VOCABULARY_SIZE = 50000
 DOWNLOAD_URL = "http://mattmahoney.net/dc/"
 DATA_PATH = "./data"
