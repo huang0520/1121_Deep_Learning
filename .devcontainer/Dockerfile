@@ -1,8 +1,8 @@
-FROM tensorflow/tensorflow:2.13.0-gpu-jupyter
+FROM tensorflow/tensorflow:latest-gpu-jupyter
 
 ARG USERNAME=matcha0714
-ARG USER_UID=1000027
-ARG USER_GID=1000001
+ARG USER_UID=1000
+ARG USER_GID=1000
 
 # Create non-root user
 RUN groupadd --gid $USER_GID $USERNAME \
