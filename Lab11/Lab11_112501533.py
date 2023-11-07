@@ -5,20 +5,21 @@ import itertools
 import math
 import os
 import pathlib
-import random
 import time
 import urllib.request
 import warnings
+from ast import In
 from collections import defaultdict
-from cProfile import label
-from re import I
+from dataclasses import dataclass
+from tabnanny import check
 
-import matplotlib as mpl
+warnings.filterwarnings("ignore")
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from matplotlib.pylab import rand
 from sklearn.model_selection import train_test_split
 from sklearn.utils import shuffle
 from tensorflow.keras import datasets, layers, models, utils
@@ -26,103 +27,130 @@ from tensorflow.keras.applications.vgg16 import VGG16
 from tqdm import tqdm
 
 # %%
-warnings.filterwarnings("ignore")
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
+# CONSTANT
 RANDOM_STATE = 1
+BUFFER_SIZE = 100
+BATCH_SIZE = 32
+NUM_CLASS = 10
 
-if not os.path.exists("src/lab11_1_lib.py"):
-    urllib.request.urlretrieve(
-        "https://nthu-datalab.github.io/ml/labs/11-1_CNN/lab11_1_lib.py",
-        "src/lab11_1_lib.py",
-    )
+IMG_PATH = "./data/oregon_wildlife"
+INPUT_DIR = "./input"
+CHECKPOINT_DIR = "./checkpoint"
 
-
-lab11_1_lib = importlib.import_module("src.lab11_1_lib")
-draw_timeline = lab11_1_lib.draw_timeline
-
-# %%
-# Get image paths
-data_dir = pathlib.Path("./data")
-
-
-all_image_paths = list(data_dir.glob("*/*/*"))
-all_image_paths = [str(path) for path in all_image_paths]
-all_image_paths = shuffle(all_image_paths, random_state=RANDOM_STATE)
-all_image_paths = [path for path in all_image_paths if path[-3:] not in ("gif", "bmp")]
-image_count = len(all_image_paths)
-
-print(f"Totol number of images: {image_count}")
-
-# %%
-labels = sorted(item.name for item in data_dir.glob("*/*") if item.is_dir())
-class_count = len(labels)
-
-print(f"Labels: {labels}")
-
-# %%
-label_to_index = dict((name, index) for index, name in enumerate(labels))
-index_to_label = dict((index, name) for index, name in enumerate(labels))
-print(label_to_index)
-
-# %%
-all_image_labels = [
-    label_to_index[pathlib.Path(path).parent.name] for path in all_image_paths
-]
-print("First 10 label indices: ", all_image_labels[:10])
-
-# %%
-# Split data
-train_paths, test_paths, train_labels, test_labels = train_test_split(
-    all_image_paths, all_image_labels, test_size=0.2, random_state=RANDOM_STATE
-)
-
-print(f"Number of training images: {len(train_paths)}")
-print(f"Number of testing images: {len(test_paths)}")
-
-# %%
-# Create (path, label) csv files
-if not os.path.exists("input"):
-    os.makedirs("input")
-
-with open("input/train.csv", "w", newline="") as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(["img_path", "label"])
-    for img_path, img_label in zip(train_paths, train_labels):
-        writer.writerow([img_path, img_label])
-
-with open("input/test.csv", "w", newline="") as csvfile:
-    writer = csv.writer(csvfile)
-    writer.writerow(["img_path", "label"])
-    for img_path, img_label in zip(test_paths, test_labels):
-        writer.writerow([img_path, img_label])
-
-# %%
 IMAGE_SIZE_CROPPED = 224
 IMAGE_HEIGHT = 300
 IMAGE_WIDTH = 300
 IMAGE_DEPTH = 3
 
+# Set random seed
+tf.random.set_seed(RANDOM_STATE)
 
-# %%
-# construct a new dataset with time informantion
+# Create directory
+if not os.path.exists(INPUT_DIR):
+    os.makedirs(INPUT_DIR)
+
+if not os.path.exists(CHECKPOINT_DIR):
+    os.makedirs(CHECKPOINT_DIR)
+
+# Download lib
+if not os.path.exists("lib/lab11_1_lib.py"):
+    urllib.request.urlretrieve(
+        "https://nthu-datalab.github.io/ml/labs/11-1_CNN/lab11_1_lib.py",
+        "src/lab11_1_lib.py",
+    )
+
+lab11_1_lib = importlib.import_module("lib.lab11_1_lib")
+draw_timeline = lab11_1_lib.draw_timeline
+
+
+# %% Function for change input to specific format
+def load_data():
+    img_dir = pathlib.Path(IMG_PATH)
+
+    # Get paths of all images
+    all_image_paths = list(img_dir.glob("*/*"))
+    all_image_paths = [str(path) for path in all_image_paths]
+    all_image_paths = shuffle(all_image_paths, random_state=RANDOM_STATE)
+    all_image_paths = [
+        path for path in all_image_paths if path[-3:] not in ("gif", "bmp")
+    ]
+
+    # Get class name of labels
+    img_labels = sorted(item.name for item in img_dir.glob("*") if item.is_dir())
+
+    # Build mapping from label class to label index and reverse
+    label_to_index = {class_name: index for index, class_name in enumerate(img_labels)}
+    index_to_label = {index: class_name for index, class_name in enumerate(img_labels)}
+
+    # Get all image labels
+    all_image_labels = [
+        label_to_index[pathlib.Path(path).parent.name] for path in all_image_paths
+    ]
+
+    # Get total number of images
+    image_count = len(all_image_paths)
+    print(f"Totol number of images: {image_count}")
+
+    # Get number of classes
+    class_count = len(img_labels)
+    print(f"Totol number of classes: {class_count}")
+    print(f"Labels: {img_labels}")
+    print(f"Mappings: {label_to_index}")
+
+    @dataclass
+    class LabelIndexMapping:
+        label_to_index: dict
+        index_to_label: dict
+
+    return list(zip(all_image_paths, all_image_labels)), LabelIndexMapping(
+        label_to_index, index_to_label
+    )
+
+
+def make_train_test_csv(input_pairs, test_size=0.2):
+    # Split image paths to train and test image paths
+    train_pairs, test_pairs = train_test_split(
+        input_pairs, test_size=test_size, random_state=RANDOM_STATE
+    )
+
+    # Create train csv
+    with open(os.path.join(INPUT_DIR, "train.csv"), "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["img_path", "label"])
+        for img_path, img_label in train_pairs:
+            writer.writerow([img_path, img_label])
+
+    # Create test csv
+    with open(os.path.join(INPUT_DIR, "test.csv"), "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["img_path", "label"])
+        for img_path, img_label in test_pairs:
+            writer.writerow([img_path, img_label])
+
+    return len(train_pairs), len(test_pairs)
+
+
+# %% Modify the tensorflow dataset to record the time measurements
 class TimeMeasuredDataset(tf.data.Dataset):
     # OUTPUT: (steps, timings, counters, img, label)
     OUTPUT_SIGNATURE = (
-        tf.TensorSpec(shape=(2, 1), dtype=tf.string),  # steps: [("Open",), ("Read",)]
-        tf.TensorSpec(shape=(2, 2), dtype=tf.float32),
+        # steps: [("Open",), ("Read",)]
+        tf.TensorSpec(shape=(2, 1), dtype=tf.string),
         # timings: [(open_enter, open_elapsed), (read_enter, read_elapsed)]
+        tf.TensorSpec(shape=(2, 2), dtype=tf.float32),
+        # counters: [
+        # (instance_idx, epoch_idx, -1), (instance_idx, epoch_idx, example_idx)
+        # ]
         tf.TensorSpec(shape=(2, 3), dtype=tf.int32),
-        # counters:
-        # [(instance_idx, epoch_idx, -1), (instance_idx, epoch_idx, example_idx)]
         tf.TensorSpec(shape=(300, 300, 3), dtype=tf.float32),
-        tf.TensorSpec(shape=(), dtype=tf.int32),  # label
+        tf.TensorSpec(shape=(), dtype=tf.int32),
     )
 
-    _INSTANCES_COUNTER = itertools.count()  # Number of datasets generated
-    _EPOCHS_COUNTER = defaultdict(
-        itertools.count
-    )  # Number of epochs done for each dataset
+    # Number of datasets generated
+    _INSTANCES_COUNTER = itertools.count()
+    # Number of epochs done for each dataset
+    _EPOCHS_COUNTER = defaultdict(itertools.count)
 
     def _generator(instance_idx, filename, open_file, read_file):
         epoch_idx = next(TimeMeasuredDataset._EPOCHS_COUNTER[instance_idx])
@@ -131,7 +159,6 @@ class TimeMeasuredDataset(tf.data.Dataset):
         open_enter = time.perf_counter()
         img_paths, img_label = open_file(filename)
         open_elapsed = time.perf_counter() - open_enter
-        # ----------------
 
         # Reading the file
         for sample_idx in range(len(img_paths)):
@@ -160,7 +187,7 @@ class TimeMeasuredDataset(tf.data.Dataset):
         )
 
 
-# %%
+# %% Utility functions for loading input
 def open_file(filename):
     rows = pd.read_csv(filename.decode("utf-8"))
     img_paths = rows["img_path"].tolist()
@@ -178,18 +205,23 @@ def read_file(image_path):
 
 
 def dataset_generator_fun_train(*args):
-    return TimeMeasuredDataset("input/train.csv", open_file, read_file)
+    return TimeMeasuredDataset(
+        os.path.join(INPUT_DIR, "train.csv"), open_file, read_file
+    )
 
 
 def dataset_generator_fun_test(*args):
-    return TimeMeasuredDataset("input/test.csv", open_file, read_file)
+    return TimeMeasuredDataset(
+        os.path.join(INPUT_DIR, "test.csv"), open_file, read_file
+    )
 
 
-# %%
-# feel free to modify these two Settings.
-BUFFER_SIZE = 10000
-BATCH_SIZE = 1
+# %% Load data
+# Change the input to specific format
+input_pairs, label_index_mapping = load_data()
+train_size, test_size = make_train_test_csv(input_pairs)
 
+# Make train and test dataset
 dataset_train = (
     tf.data.Dataset.range(1)
     .flat_map(dataset_generator_fun_train)
@@ -201,20 +233,12 @@ dataset_test = (
     .batch(BATCH_SIZE, drop_remainder=True)
 )
 
-# %%
-for steps, timings, counters, img, img_label in dataset_train.take(1):
-    print(steps[0], timings[0], counters[0])
-    print(img[0].shape)
-    plt.imshow(img[0])
-    plt.axis("off")
-    plt.show()
-    print(index_to_label[img_label[0].numpy()])
 
-# %%
+# %% Build model
 base_model = VGG16(
     include_top=False,
     weights="imagenet",
-    input_shape=(300, 300, 3),
+    input_shape=(IMAGE_HEIGHT, IMAGE_WIDTH, IMAGE_DEPTH),
     pooling=None,
 )
 for layer in base_model.layers:
@@ -226,15 +250,17 @@ top_model.add(layers.Dense(4096, activation="relu"))
 top_model.add(layers.Dropout(0.5))
 top_model.add(layers.Dense(1024, activation="relu"))
 top_model.add(layers.Dropout(0.5))
-top_model.add(layers.Dense(class_count, activation="softmax"))
+top_model.add(layers.Dense(NUM_CLASS, activation="softmax"))
 
 wild_model = tf.keras.Model(
     inputs=base_model.input, outputs=top_model(base_model.output)
 )
 
+wild_model.save_weights(os.path.join(CHECKPOINT_DIR, "wild_model.h5"))
 wild_model.summary()
 
-# %%
+
+# %% Loss function and optimizer
 loss_object = tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True)
 optimizer = tf.keras.optimizers.Adam()
 
@@ -245,78 +271,7 @@ test_loss = tf.keras.metrics.Mean(name="test_loss")
 test_accuracy = tf.keras.metrics.SparseCategoricalAccuracy(name="test_accuracy")
 
 
-# %%
-def map_decorator(func):
-    def wrapper(steps, times, values, image, label):
-        # Use a tf.py_function to prevent auto-graph from compiling the method
-        return tf.py_function(
-            func,
-            inp=(steps, times, values, image, label),
-            Tout=(steps.dtype, times.dtype, values.dtype, image.dtype, tf.float32),
-        )
-
-    return wrapper
-
-
-@map_decorator
-def map_fun_with_time(steps, times, values, image, img_label):
-    # sleep to avoid concurrency issue
-    time.sleep(0.05)
-
-    # record the enter time into map_fun()
-    map_enter = time.perf_counter()
-
-    image = tf.reshape(image, [IMAGE_DEPTH, IMAGE_HEIGHT, IMAGE_WIDTH])
-    image = tf.divide(tf.cast(tf.transpose(image, [1, 2, 0]), tf.float32), 255.0)
-    img_label = tf.one_hot(img_label, 10)
-    distorted_image = tf.image.random_crop(
-        image, [IMAGE_SIZE_CROPPED, IMAGE_SIZE_CROPPED, IMAGE_DEPTH]
-    )
-    # distorted_image = tf.image.resize(image, [IMAGE_SIZE_CROPPED,IMAGE_SIZE_CROPPED])
-    distorted_image = tf.image.random_flip_left_right(distorted_image)
-    distorted_image = tf.image.random_brightness(distorted_image, max_delta=63)
-    distorted_image = tf.image.random_contrast(distorted_image, lower=0.2, upper=1.8)
-    distorted_image = tf.image.per_image_standardization(distorted_image)
-
-    map_elapsed = time.perf_counter() - map_enter
-    # ----------------
-
-    return (
-        tf.concat((steps, [["Map"]]), axis=0),
-        tf.concat((times, [[map_enter, map_elapsed]]), axis=0),
-        tf.concat((values, [values[-1]]), axis=0),
-        distorted_image,
-        img_label,
-    )
-
-
-@map_decorator
-def map_fun_test_with_time(steps, times, values, image, img_label):
-    # sleep to avoid concurrency issue
-    time.sleep(0.05)
-
-    # record the enter time into map_fun_test()
-    map_enter = time.perf_counter()
-
-    image = tf.reshape(image, [IMAGE_DEPTH, IMAGE_HEIGHT, IMAGE_WIDTH])
-    image = tf.divide(tf.cast(tf.transpose(image, [1, 2, 0]), tf.float32), 255.0)
-    img_label = tf.one_hot(img_label, 10)
-    distorted_image = tf.image.resize(image, [IMAGE_SIZE_CROPPED, IMAGE_SIZE_CROPPED])
-    distorted_image = tf.image.per_image_standardization(distorted_image)
-
-    map_elapsed = time.perf_counter() - map_enter
-    # ----------------
-
-    return (
-        tf.concat((steps, [["Map"]]), axis=0),
-        tf.concat((times, [[map_enter, map_elapsed]]), axis=0),
-        tf.concat((values, [values[-1]]), axis=0),
-        distorted_image,
-        img_label,
-    )
-
-
-# %%
+# %% Training and testing step
 @tf.function
 def train_step(image, img_label):
     with tf.GradientTape() as tape:
@@ -357,7 +312,7 @@ def timelined_benchmark(dataset_train, dataset_test, EPOCHS):
 
         tf.print("training:")
         for steps, times, values, image, img_label in tqdm(
-            dataset_train, total=math.floor(len(train_paths) / BATCH_SIZE)
+            dataset_train, total=math.floor(train_size / BATCH_SIZE)
         ):
             time.sleep(0.05)
 
@@ -399,7 +354,7 @@ def timelined_benchmark(dataset_train, dataset_test, EPOCHS):
 
         tf.print("testing:")
         for steps, times, values, image, img_label in tqdm(
-            dataset_test, total=math.floor(len(test_paths) / BATCH_SIZE)
+            dataset_test, total=math.floor(test_size / BATCH_SIZE)
         ):
             time.sleep(0.05)
 
@@ -458,35 +413,219 @@ def timelined_benchmark(dataset_train, dataset_test, EPOCHS):
     return {"steps": steps_acc, "times": times_acc, "values": values_acc}
 
 
-# %%
-# feel free to modify these two Settings.
-BUFFER_SIZE = 10000
-BATCH_SIZE = 64
+# %% Function for checking image look like
+def check_image(dataset_train):
+    for steps, timings, counters, img, label in dataset_train.take(1):
+        print(steps[0], timings[0], counters[0])
+        print(img[0].shape)
+        plt.imshow(img[0])
+        plt.axis("off")
+        plt.show()
+        print(label_index_mapping.index_to_label[label[0].numpy()])
 
-# Construct training Dataset with similar steps
-dataset_train = (
+
+# %% Check image look like
+check_image(dataset_train)
+
+# %% Naive training
+# timeline_Naive = timelined_benchmark(dataset_train, dataset_test, EPOCHS=3)
+# draw_timeline(timeline=timeline_Naive, title="Naive", min_width=500)
+
+
+# %% Transformation map function
+def map_decorator(func):
+    def wrapper(steps, times, values, image, label):
+        # Use a tf.py_function to prevent auto-graph from compiling the method
+        return tf.py_function(
+            func,
+            inp=(steps, times, values, image, label),
+            Tout=(steps.dtype, times.dtype, values.dtype, image.dtype, tf.float32),
+        )
+
+    return wrapper
+
+
+@map_decorator
+def map_train_with_transformation(steps, times, values, image, label):
+    # record the enter time
+    map_enter = time.perf_counter()
+
+    # Cast label to float32
+    label = tf.cast(label, tf.float32)
+
+    # Distort image and standardize image
+    distorted_image = tf.image.random_crop(
+        image, [IMAGE_SIZE_CROPPED, IMAGE_SIZE_CROPPED, IMAGE_DEPTH]
+    )
+    distorted_image = tf.image.random_flip_left_right(distorted_image)
+    distorted_image = tf.image.random_brightness(distorted_image, max_delta=63)
+    distorted_image = tf.image.random_contrast(distorted_image, lower=0.2, upper=1.8)
+    distorted_image = tf.image.per_image_standardization(distorted_image)
+
+    # Transpose and resize image to fit the model
+    distorted_image = tf.image.resize(distorted_image, [IMAGE_HEIGHT, IMAGE_WIDTH])
+
+    map_elapsed = time.perf_counter() - map_enter
+
+    return (
+        tf.concat((steps, [["Map"]]), axis=0),
+        tf.concat((times, [[map_enter, map_elapsed]]), axis=0),
+        tf.concat((values, [values[-1]]), axis=0),
+        distorted_image,
+        label,
+    )
+
+
+@map_decorator
+def map_test_with_transformation(steps, times, values, image, label):
+    # # Record the enter time
+    map_enter = time.perf_counter()
+
+    # # Cast label to float32
+    label = tf.cast(label, tf.float32)
+
+    # # Distort image and standardize image
+    distorted_image = tf.image.resize_with_crop_or_pad(
+        image, IMAGE_SIZE_CROPPED, IMAGE_SIZE_CROPPED
+    )
+    distorted_image = tf.image.per_image_standardization(distorted_image)
+
+    # # Transpose and resize image to fit the model
+    distorted_image = tf.image.resize(distorted_image, [IMAGE_HEIGHT, IMAGE_WIDTH])
+
+    map_elapsed = time.perf_counter() - map_enter
+
+    return (
+        tf.concat((steps, [["Map"]]), axis=0),
+        tf.concat((times, [[map_enter, map_elapsed]]), axis=0),
+        tf.concat((values, [values[-1]]), axis=0),
+        distorted_image,
+        label,
+    )
+
+
+# %% Generate dataset with transformation
+dataset_train_with_transformation = (
     tf.data.Dataset.range(1)
     .flat_map(dataset_generator_fun_train)
-    .map(map_fun_with_time)
-    .shuffle(10000)
+    .map(map_train_with_transformation)
+    .shuffle(BUFFER_SIZE)
     .batch(BATCH_SIZE, drop_remainder=True)
 )
 
-# Construct testing Dataset with similar steps
-dataset_test = (
+dataset_test_with_transformation = (
     tf.data.Dataset.range(1)
     .flat_map(dataset_generator_fun_test)
-    .map(map_fun_test_with_time)
+    .map(map_test_with_transformation)
     .batch(BATCH_SIZE, drop_remainder=True)
 )
 
-timeline_Naive = timelined_benchmark(dataset_train, dataset_test, EPOCHS=2)
-draw_timeline(timeline=timeline_Naive, title="Naive", min_width=3000)
+# %% Check transformed image look like
+check_image(dataset_train_with_transformation)
 
-# %%
-# TODO:
-# build `dataset_train_augmentation` and `dataset_test_augmentation` with transformation
-## Remember to define your own map functions with map_decorator before calling map
+# %% Training with transformation
+# load the same initialization of weights and re-train with optimized input pipeline
+wild_model.load_weights(os.path.join(CHECKPOINT_DIR, "wild_model.h5"))
+timeline_Augmentation = timelined_benchmark(
+    dataset_train_with_transformation, dataset_test_with_transformation, EPOCHS=3
+)
 
-# dataset_train_augmentation = tf.data.Dataset.range(1). ...
-# dataset_test_augmentation = tf.data.Dataset.range(1). ...
+# %% Draw timeline
+draw_timeline(timeline=timeline_Augmentation, title="Augmentation", min_width=500)
+
+
+# %% Batchwise transformation map function
+@map_decorator
+def map_train_with_transformation_batchwise(steps, times, values, image, label):
+    # record the enter time
+    map_enter = time.perf_counter()
+
+    # Cast label to float32
+    label = tf.cast(label, tf.float32)
+
+    # Distort image and standardize image
+    distorted_image = tf.image.random_crop(
+        image, [tf.shape(image)[0], IMAGE_SIZE_CROPPED, IMAGE_SIZE_CROPPED, IMAGE_DEPTH]
+    )
+    distorted_image = tf.image.random_flip_left_right(distorted_image)
+    distorted_image = tf.image.random_brightness(distorted_image, max_delta=63)
+    distorted_image = tf.image.random_contrast(distorted_image, lower=0.2, upper=1.8)
+    distorted_image = tf.image.per_image_standardization(distorted_image)
+
+    # Transpose and resize image to fit the model
+    distorted_image = tf.image.resize(distorted_image, [IMAGE_HEIGHT, IMAGE_WIDTH])
+
+    map_elapsed = time.perf_counter() - map_enter
+
+    return (
+        tf.concat((steps, tf.tile([[["Map"]]], [BATCH_SIZE, 1, 1])), axis=1),
+        tf.concat(
+            (times, tf.tile([[[map_enter, map_elapsed]]], [BATCH_SIZE, 1, 1])), axis=1
+        ),
+        tf.concat((values, tf.tile([[values[:][-1][0]]], [BATCH_SIZE, 1, 1])), axis=1),
+        distorted_image,
+        label,
+    )
+
+
+@map_decorator
+def map_test_with_transformation_batchwise(steps, times, values, image, label):
+    # record the enter time
+    map_enter = time.perf_counter()
+
+    # Cast label to float32
+    label = tf.cast(label, tf.float32)
+
+    # Distort image and standardize image
+    distorted_image = tf.image.resize_with_crop_or_pad(
+        image, IMAGE_SIZE_CROPPED, IMAGE_SIZE_CROPPED
+    )
+    distorted_image = tf.image.per_image_standardization(distorted_image)
+
+    # Transpose and resize image to fit the model
+    distorted_image = tf.image.resize(distorted_image, [IMAGE_HEIGHT, IMAGE_WIDTH])
+
+    map_elapsed = time.perf_counter() - map_enter
+
+    return (
+        tf.concat((steps, tf.tile([[["Map"]]], [BATCH_SIZE, 1, 1])), axis=1),
+        tf.concat(
+            (times, tf.tile([[[map_enter, map_elapsed]]], [BATCH_SIZE, 1, 1])), axis=1
+        ),
+        tf.concat((values, tf.tile([[values[:][-1][0]]], [BATCH_SIZE, 1, 1])), axis=1),
+        distorted_image,
+        label,
+    )
+
+
+# %% Generate dataset with transformation and optimization
+dataset_train_with_optimization = (
+    tf.data.Dataset.range(1)
+    .interleave(dataset_generator_fun_train, num_parallel_calls=tf.data.AUTOTUNE)
+    .shuffle(BUFFER_SIZE)
+    .batch(BATCH_SIZE, drop_remainder=True)
+    .map(map_train_with_transformation_batchwise, num_parallel_calls=tf.data.AUTOTUNE)
+    .cache()
+    .prefetch(tf.data.AUTOTUNE)
+)
+
+dataset_test_with_optimization = (
+    tf.data.Dataset.range(1)
+    .interleave(dataset_generator_fun_test, num_parallel_calls=tf.data.AUTOTUNE)
+    .batch(BATCH_SIZE, drop_remainder=True)
+    .map(map_test_with_transformation_batchwise, num_parallel_calls=tf.data.AUTOTUNE)
+    .cache()
+    .prefetch(tf.data.AUTOTUNE)
+)
+
+# %% Check transformed image look like
+check_image(dataset_train_with_optimization)
+
+# %% Training with transformation and optimization
+# load the same initialization of weights and re-train with optimized input pipeline
+wild_model.load_weights(os.path.join(CHECKPOINT_DIR, "wild_model.h5"))
+timeline_Optimized = timelined_benchmark(
+    dataset_train_with_optimization, dataset_test_with_optimization, EPOCHS=3
+)
+# %% Draw timeline
+draw_timeline(timeline=timeline_Optimized, title="Optimized", min_width=3000)

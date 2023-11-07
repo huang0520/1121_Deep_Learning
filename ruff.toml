@@ -4,7 +4,7 @@ select = [
     "W",
     "I001", # isort
 ]
-ignore = ["F401"]
+ignore = ["F401", "E402]
 target-version = "py310"
 include = ["*.py", "*.pyi", "**/pyproject.toml", "*.ipynb"]
 
