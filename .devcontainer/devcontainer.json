@@ -3,9 +3,7 @@
 {
 	"name": "Python 3",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
-	"build": {
-		"dockerfile": "Dockerfile"
-	},
+	"image": "matcha0714/deep-learning:latest",
 
 	"runArgs": [ "--name", "Deep_Learning", "--gpus", "all" ],
 
