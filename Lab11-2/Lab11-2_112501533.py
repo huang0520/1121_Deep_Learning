@@ -59,6 +59,7 @@ plt.subplot(1, 2, 2)
 imshow(style_image, "Style Image")
 
 # %% Define content and style representation
+# TODO: Change the content and style layers, and calculate the content, style loss
 content_layers = ["block5_conv2"]
 
 style_layers = [
