@@ -6,4 +6,5 @@ output/
 input/
 data/
 checkpoint/
+checkpoints/
 .ipynb_checkpoints/
