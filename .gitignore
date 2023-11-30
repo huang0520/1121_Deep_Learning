@@ -8,3 +8,6 @@ data/
 checkpoint/
 checkpoints/
 .ipynb_checkpoints/
+imgs/
+
+*.zip
