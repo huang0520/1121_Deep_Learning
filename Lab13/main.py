@@ -1,5 +1,4 @@
 # %% Prepare the environment
-
 import os
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "1"
@@ -11,29 +10,33 @@ import moviepy.editor as mpy
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from tqdm import tqdm, trange
+from tqdm import trange
 
-SAMPLE_COL = 16
-SAMPLE_ROW = 16
+SAMPLE_COL = 8
+SAMPLE_ROW = 8
 SAMPLE_NUM = SAMPLE_COL * SAMPLE_ROW
 
-IMG_H = 28
-IMG_W = 28
-IMG_C = 1
-IMG_SHAPE = (IMG_H, IMG_W, IMG_C)
+IMG_HEIGHT = 64
+IMG_WIDTH = 64
+IMG_CHANNEL = 3
+IMG_SHAPE = (IMG_HEIGHT, IMG_WIDTH, IMG_CHANNEL)
 
 # Dataset parameters
-BATCH_SIZE = 5000
-BUF = 50000
-EPOCH = 256
+BATCH_SIZE = 512
+BUF = 65536
 
 # Training parameters
+EPOCH = 256
+Z_DIM = 128
 LEARNING_RATE = 1e-4
-BETA_1 = 0.5
+BETA_1 = 0
 BETA_2 = 0.9
 LAMBDA = 10
-Z_DIM = 128
 
+# Other parameters
+IMG_DIR = "./data/img_align_celeba_png"
+OUTPUT_DIR = "./output"
+AUTOTUNE = tf.data.experimental.AUTOTUNE
 
 # %%
 gpus = tf.config.experimental.list_physical_devices("GPU")
@@ -50,22 +53,27 @@ if gpus:
 
 
 # %% Build dataset
-# Load images, discard labels
-(train_images, _), (test_images, _) = tf.keras.datasets.mnist.load_data()
+def load_image(img_path: str):
+    img = tf.io.read_file(img_path)
+    img = tf.image.decode_png(img, channels=IMG_CHANNEL)
+    img = tf.image.convert_image_dtype(img, tf.float32)
+    img = tf.image.resize(img, [IMG_HEIGHT, IMG_WIDTH])
+    return img
 
-iTrain = train_images.reshape(-1, 28, 28, 1).astype(np.float32)
 
-# Normalizing the images to the range of [0., 1.]
-iTrain = iTrain / 255.0
+img_names: list = os.listdir(IMG_DIR)
+img_paths: list = [os.path.join(IMG_DIR, name) for name in img_names]
 
-dsTrain = (
-    tf.data.Dataset.from_tensor_slices(iTrain)
+dataset = tf.data.Dataset.from_tensor_slices(img_paths)
+dataset = (
+    dataset.map(load_image, num_parallel_calls=AUTOTUNE)
     .shuffle(BUF)
     .batch(BATCH_SIZE, drop_remainder=True)
+    .prefetch(AUTOTUNE)
 )
 
 
-# %%Utility function
+# %% Utility function
 def utPuzzle(imgs, row, col, path=None):
     h, w, c = imgs[0].shape
     out = np.zeros((h * row, w * col, c), np.uint8)
@@ -74,7 +82,7 @@ def utPuzzle(imgs, row, col, path=None):
         out[j * h : (j + 1) * h, i * w : (i + 1) * w, :] = img
 
     if path is not None:
-        iio.imwrite(path, out.squeeze(), format="png")
+        iio.imwrite(path, out.squeeze())
     return out
 
 
@@ -161,13 +169,11 @@ def g_train_step(img_real):
         eta = tf.random.uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
         interpolated = img_real * eta + img_fake * (1 - eta)
         d_interpolated = D(interpolated, training=True)
+        d_gradients = tf.gradients(d_interpolated, interpolated)[0]
+        l2_norm = tf.sqrt(tf.reduce_sum(tf.square(d_gradients), axis=[1, 2, 3]))
+        gradient_penalty = tf.square(l2_norm - 1.0)
 
-        d_grads = tf.gradients(d_interpolated, interpolated)[0]
-
-        l2_norm = tf.sqrt(tf.reduce_sum(tf.square(d_grads), axis=[1, 2, 3]))
-        grad_penalty = tf.square(l2_norm - 1.0)
-
-        loss_d = tf.reduce_mean(d_fake - d_real + LAMBDA * grad_penalty)
+        loss_d = tf.reduce_mean(d_fake - d_real + LAMBDA * gradient_penalty)
 
     gradient_g = tape.gradient(loss_g, G.trainable_variables)
     optimizer_g.apply_gradients(zip(gradient_g, G.trainable_variables))
@@ -226,13 +232,13 @@ for epoch in pbar:
     loss_g_total = 0.0
     loss_d_total = 0.0
 
-    for real_imgs in dsTrain:
+    for real_imgs in dataset:
         loss_g, loss_d = train_step[epoch % num_critic](real_imgs)
         loss_g_total += loss_g.numpy()
         loss_d_total += loss_d.numpy()
 
-    loss_g_record[epoch] = loss_g_total / len(dsTrain)
-    loss_d_record[epoch] = loss_d_total / len(dsTrain)
+    loss_g_record[epoch] = loss_g_total / len(dataset)
+    loss_d_record[epoch] = loss_d_total / len(dataset)
     pbar.set_postfix(
         {
             "Loss G": "%.4f" % loss_g_record[epoch],
@@ -245,12 +251,11 @@ for epoch in pbar:
         (out * 255.0).numpy().astype(np.uint8),
         SAMPLE_COL,
         SAMPLE_ROW,
-        f"imgs/wgan_gp_{epoch:04d}.png",
+        f"{OUTPUT_DIR}/gan_{epoch:04d}.png",
     )
     sample_record[epoch] = img
-
-    if epoch % 16 == 0:
-        plt.imshow(img, cmap="gray")
+    if epoch + 1 % 16 == 0:
+        plt.imshow(img)
         plt.axis("off")
         plt.title(f"Epoch {epoch}")
         plt.show()
