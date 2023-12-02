@@ -28,8 +28,8 @@ BUF = 65536
 # Training parameters
 EPOCH = 256
 Z_DIM = 128
-LEARNING_RATE = 1e-4
-BETA_1 = 0
+LEARNING_RATE = 5e-5
+BETA_1 = 0.5
 BETA_2 = 0.9
 LAMBDA = 10
 
@@ -227,13 +227,18 @@ loss_d_record = [None] * EPOCH
 sample_record = [None] * EPOCH
 sample_raw = tf.random.normal([SAMPLE_NUM, Z_DIM])
 
+ckpt = tf.train.Checkpoint(G=G, D=D)
+manager = tf.train.CheckpointManager(ckpt, "./checkpoints", max_to_keep=3)
+
+critic = 0
 pbar = trange(EPOCH, desc="WGAN-GP", unit="epoch")
 for epoch in pbar:
     loss_g_total = 0.0
     loss_d_total = 0.0
 
     for real_imgs in dataset:
-        loss_g, loss_d = train_step[epoch % num_critic](real_imgs)
+        loss_g, loss_d = train_step[critic](real_imgs)
+        critic = critic + 1 if critic < num_critic - 1 else 0
         loss_g_total += loss_g.numpy()
         loss_d_total += loss_d.numpy()
 
@@ -254,7 +259,9 @@ for epoch in pbar:
         f"{OUTPUT_DIR}/gan_{epoch:04d}.png",
     )
     sample_record[epoch] = img
-    if epoch + 1 % 16 == 0:
+    manager.save()
+
+    if (epoch + 1) % 32 == 0:
         plt.imshow(img)
         plt.axis("off")
         plt.title(f"Epoch {epoch}")
