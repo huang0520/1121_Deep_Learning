@@ -227,9 +227,6 @@ loss_d_record = [None] * EPOCH
 sample_record = [None] * EPOCH
 sample_raw = tf.random.normal([SAMPLE_NUM, Z_DIM])
 
-ckpt = tf.train.Checkpoint(G=G, D=D)
-manager = tf.train.CheckpointManager(ckpt, "./checkpoints", max_to_keep=3)
-
 critic = 0
 pbar = trange(EPOCH, desc="WGAN-GP", unit="epoch")
 for epoch in pbar:
@@ -259,7 +256,6 @@ for epoch in pbar:
         f"{OUTPUT_DIR}/gan_{epoch:04d}.png",
     )
     sample_record[epoch] = img
-    manager.save()
 
     if (epoch + 1) % 32 == 0:
         plt.imshow(img)
@@ -276,3 +272,10 @@ plt.ylabel("Loss")
 plt.title("WGAN-GP Training Loss")
 plt.tight_layout()
 plt.show()
+
+# %%
+utMakeGif(np.array(sample_record), f"{OUTPUT_DIR}/gan.gif", 10)
+
+# %%
+img = plt.imread(f"{OUTPUT_DIR}/gan_0255.png")
+plt.imshow(img)
