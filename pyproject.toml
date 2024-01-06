@@ -21,6 +21,9 @@ opencv-python = "^4.8.1.78"
 nvidia-cudnn-cu11 = "^8.9.6.50"
 pygame = "^2.5.2"
 ple = {path = "Lab14/PyGame-Learning-Environment", develop = true}
+scikit-image = "^0.22.0"
+tensorflow-probability = "0.22.*"
+seaborn = "^0.13.0"
 
 
 [build-system]
